@@ -1,6 +1,7 @@
 on:
   watch:
     types: started
+
 jobs:
   prepare_release:
     runs-on: ubuntu-22.04
@@ -10,7 +11,7 @@ jobs:
       id: release_tag
       run: |
         release_tag="FriendlyWrt-$(date +%Y-%m-%d)"
-        echo "##[set-output name=release_tag;]$release_tag"
+        echo "release_tag=$release_tag" >> $GITHUB_OUTPUT
 
     - name: Create empty release
       id: release
@@ -21,6 +22,7 @@ jobs:
         tag_name: ${{ steps.release_tag.outputs.release_tag }}
         draft: false
         prerelease: false
+
     outputs:
       release_tag: ${{ steps.release_tag.outputs.release_tag }}
       upload_url: ${{ steps.release.outputs.upload_url }}
@@ -32,7 +34,7 @@ jobs:
     strategy:
       matrix:
         VERSION: ['23.05', '24.10']
-        SET: [docker, non-docker]
+        SET: ['non-docker']
 
     steps:
     - name: Checkout
@@ -82,9 +84,8 @@ jobs:
     - name: Prepare dot config and feeds
       run: |
         cd project
-        [ "${{ matrix.SET }}" == "docker" ] && SUFFIX="-docker"
-        DIRNAME=friendlywrt$(echo ${{ matrix.VERSION }}|awk -F . '{print $1}')${SUFFIX}
-        CONFIG=rockchip${SUFFIX}
+        DIRNAME=friendlywrt$(echo ${{ matrix.VERSION }}|awk -F . '{print $1}')
+        CONFIG=rockchip
         cat > .current_config.mk <<EOL
         . device/friendlyelec/rk3399/base.mk
         TARGET_IMAGE_DIRNAME=${DIRNAME}
@@ -118,11 +119,10 @@ jobs:
       run: |
         cd project
         source .current_config.mk
-        [ "${{ matrix.SET }}" == "docker" ] && SUFFIX="-docker"
-        rootfs_filename="rootfs-friendlywrt-${{ matrix.VERSION }}${SUFFIX}.tgz"
+        rootfs_filename="rootfs-friendlywrt-${{ matrix.VERSION }}.tgz"
         tar cvzf ../artifact/${rootfs_filename} ${FRIENDLYWRT_SRC}/${FRIENDLYWRT_ROOTFS} \
               ${FRIENDLYWRT_SRC}/${FRIENDLYWRT_PACKAGE_DIR}
-        echo "##[set-output name=rootfs_filename;]$rootfs_filename"
+        echo "rootfs_filename=$rootfs_filename" >> $GITHUB_OUTPUT
 
     - name: Upload rootfs package
       uses: svenstaro/upload-release-action@v2
@@ -137,12 +137,12 @@ jobs:
     needs: [prepare_release,build_friendlywrt]
     runs-on: ubuntu-22.04
     if: github.event.repository.owner.id == github.event.sender.id
-
     strategy:
       matrix:
         VERSION: ['23.05', '24.10']
-        CPU: [rk3328, rk3528, rk3399, rk3566, rk3568, rk3576, rk3588]
-        SET: [docker, non-docker]
+        CPU: ['rk3328']
+        SET: ['non-docker']
+
     steps:
     - name: Checkout
       uses: actions/checkout@main
@@ -184,8 +184,7 @@ jobs:
         repo sync -c scripts/sd-fuse  --no-clone-bundle
         repo sync -c toolchain  --no-clone-bundle
 
-    - name: Download friendlywrt rootfs (non-docker)
-      if: matrix.SET == 'non-docker'
+    - name: Download friendlywrt rootfs
       uses: robinraju/release-downloader@v1.6
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -193,16 +192,6 @@ jobs:
         repository: ${{ github.repository }}
         tag: ${{ needs.prepare_release.outputs.release_tag }}
         fileName: "rootfs-friendlywrt-${{ matrix.VERSION }}.tgz"
-
-    - name: Download friendlywrt rootfs (docker)
-      if: matrix.SET == 'docker'
-      uses: robinraju/release-downloader@v1.6
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        repository: ${{ github.repository }}
-        tag: ${{ needs.prepare_release.outputs.release_tag }}
-        fileName: "rootfs-friendlywrt-${{ matrix.VERSION }}-docker.tgz"
 
     - name: Prepare config
       id: config
@@ -217,39 +206,27 @@ jobs:
           exit 1
           ;;
         esac
-        [ "${{ matrix.SET }}" == "docker" ] && SUFFIX="-docker"
-        FILENAME=${MODEL}-FriendlyWrt-${{ matrix.VERSION }}${SUFFIX}.img
-        DIRNAME=friendlywrt$(echo ${{ matrix.VERSION }}|awk -F . '{print $1}')${SUFFIX}
-        CONFIG=rockchip${SUFFIX}
+        FILENAME=${MODEL}-FriendlyWrt-${{ matrix.VERSION }}.img
+        DIRNAME=friendlywrt$(echo ${{ matrix.VERSION }}|awk -F . '{print $1}')
+        CONFIG=rockchip
         cat > .current_config.mk <<EOL
         . device/friendlyelec/${{ matrix.CPU }}/base.mk
         TARGET_IMAGE_DIRNAME=${DIRNAME}
         TARGET_FRIENDLYWRT_CONFIG=${CONFIG}
         TARGET_SD_RAW_FILENAME=${FILENAME}
         EOL
-        echo "##[set-output name=img_filename;]$FILENAME"
+        echo "img_filename=$FILENAME" >> $GITHUB_OUTPUT
 
     - name: Unpack friendlywrt rootfs
       run: |
         cd project
-        [ "${{ matrix.SET }}" == "docker" ] && SUFFIX="-docker"
-        tar xvzf "../rootfs-friendlywrt-${{ matrix.VERSION }}${SUFFIX}.tgz"
+        tar xvzf "../rootfs-friendlywrt-${{ matrix.VERSION }}.tgz"
 
     - name: Compile uboot and kernel
       run: |
         cd project
-        ## If you need to modify the kernel configuration, please edit the script below
-        # source ../scripts/custome_kernel_config.sh
-
         ./build.sh uboot
         ./build.sh kernel
-
-        ## If you want to compile a driver from source, here is an example
-        # case ${{ matrix.CPU }} in
-        # rk3568)
-        #     ../scripts/3rd/add_r8125.sh
-        #     ;;
-        # esac
 
     - name: Build sd image
       id: build_sd_image
@@ -268,4 +245,4 @@ jobs:
         asset_name: ${{ steps.config.outputs.img_filename }}.gz
         tag: ${{ needs.prepare_release.outputs.release_tag }}
         overwrite: true
-
+        
